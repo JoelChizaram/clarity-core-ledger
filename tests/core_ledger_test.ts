@@ -70,7 +70,7 @@ Clarinet.test({
 });
 
 Clarinet.test({
-    name: "Can set and get budget",
+    name: "Can set and get budget with alerts",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const wallet1 = accounts.get('wallet_1')!;
         
@@ -78,7 +78,9 @@ Clarinet.test({
             Tx.contractCall('core_ledger', 'set-budget', [
                 types.ascii("Groceries"),
                 types.uint(50000),
-                types.ascii("MONTHLY")
+                types.ascii("MONTHLY"),
+                types.bool(true),
+                types.uint(80)
             ], wallet1.address)
         ]);
         
@@ -94,5 +96,54 @@ Clarinet.test({
         let budgetData = budget.result.expectSome().expectTuple();
         assertEquals(budgetData['limit'].expectUint(50000), types.uint(50000));
         assertEquals(budgetData['period'].expectAscii("MONTHLY"), "MONTHLY");
+        assertEquals(budgetData['alerts-enabled'].expectBool(true), true);
+        assertEquals(budgetData['alert-threshold'].expectUint(80), types.uint(80));
+    }
+});
+
+Clarinet.test({
+    name: "Budget enforcement and alerts work correctly",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const wallet1 = accounts.get('wallet_1')!;
+        
+        // Create account and budget
+        let setupBlock = chain.mineBlock([
+            Tx.contractCall('core_ledger', 'create-account', [
+                types.ascii("Test Account")
+            ], wallet1.address),
+            Tx.contractCall('core_ledger', 'set-budget', [
+                types.ascii("Food"),
+                types.uint(1000),
+                types.ascii("MONTHLY"),
+                types.bool(true),
+                types.uint(80)
+            ], wallet1.address)
+        ]);
+        
+        // Record transaction that exceeds budget
+        let txBlock = chain.mineBlock([
+            Tx.contractCall('core_ledger', 'record-transaction', [
+                types.uint(1),
+                types.uint(1100),
+                types.ascii("Food"),
+                types.ascii("Groceries"),
+                types.ascii("EXPENSE")
+            ], wallet1.address)
+        ]);
+        
+        txBlock.receipts[0].result.expectErr().expectUint(103); // err-budget-exceeded
+        
+        // Check budget status
+        let status = chain.callReadOnlyFn(
+            'core_ledger',
+            'get-budget-status',
+            [types.ascii("Food")],
+            wallet1.address
+        );
+        
+        let statusData = status.result.expectOk().expectTuple();
+        assertEquals(statusData['remaining'].expectUint(1000), types.uint(1000));
+        assertEquals(statusData['used-percentage'].expectUint(0), types.uint(0));
+        assertEquals(statusData['alert-triggered'].expectBool(false), false);
     }
 });
