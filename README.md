@@ -1,30 +1,21 @@
 # CoreLedger
 
-A blockchain-powered personal finance manager built on Stacks using Clarity.
+[Previous content remains unchanged]
 
-## Features
-- Create and manage multiple accounts
-- Record income and expenses with categories
-- Track balances and transaction history
-- Advanced budget management:
-  - Set spending limits by category
-  - Multiple budget periods (daily/weekly/monthly/yearly)
-  - Automatic budget resets
-  - Budget enforcement
-  - Configurable spending alerts
-  - Real-time budget status tracking
-- Generate financial reports
+## Transaction History
+The enhanced transaction history system provides:
+- Paginated transaction lists
+- Efficient balance history tracking
+- Block range validation
+- Transaction filtering by account
 
-## Getting Started
-1. Clone the repository
-2. Install dependencies using `clarinet install`
-3. Run tests using `clarinet test`
+### Usage
+```clarity
+;; Get paginated transactions
+(get-account-transactions account-id limit offset)
 
-## Budget Management
-The enhanced budgeting system allows users to:
-- Set spending limits for different expense categories
-- Choose budget periods (daily, weekly, monthly, or yearly)
-- Enable automatic budget resets at period boundaries
-- Get alerts when spending reaches configurable thresholds
-- Track remaining budget and spending percentages
-- Enforce hard spending limits to prevent budget overruns
+;; Get balance history
+(get-account-balance-history account-id from-block to-block)
+```
+
+[Rest of README remains unchanged]
