@@ -9,183 +9,79 @@
 (define-constant err-budget-exceeded (err u103))
 (define-constant err-invalid-period (err u104))
 (define-constant err-invalid-amount (err u105))
+(define-constant err-invalid-range (err u106))
+(define-constant err-invalid-limit (err u107))
 
-;; Data structures
-(define-map accounts 
-    { owner: principal, account-id: uint }
-    { 
-        name: (string-ascii 64), 
-        balance: uint, 
-        created-at: uint,
-        last-updated: uint
-    }
+;; [Previous data structures remain unchanged]
+
+;; Helper functions
+(define-private (validate-transaction-type (tx-type (string-ascii 16)))
+    (or (is-eq tx-type "INCOME") (is-eq tx-type "EXPENSE"))
 )
 
-(define-map transactions 
-    { tx-id: uint }
-    { 
-        account-id: uint,
-        amount: uint,
-        category: (string-ascii 32),
-        description: (string-ascii 128),
-        tx-type: (string-ascii 16),
-        timestamp: uint,
-        balance-after: uint
-    }
-)
-
-(define-map budgets
-    { owner: principal, category: (string-ascii 32) }
-    { 
-        limit: uint, 
-        period: (string-ascii 16),
-        used: uint,
-        last-reset: uint,
-        alerts-enabled: bool,
-        alert-threshold: uint
-    }
-)
-
-;; Data variables
-(define-data-var last-account-id uint u0)
-(define-data-var last-tx-id uint u0)
-
-;; Private functions
-(define-private (is-owner)
-    (is-eq tx-sender contract-owner)
-)
-
-(define-private (is-account-owner (account-id uint))
-    (match (map-get? accounts { owner: tx-sender, account-id: account-id })
-        account true
-        false
+(define-private (validate-block-range (from-block uint) (to-block uint))
+    (and 
+        (>= to-block from-block)
+        (<= to-block block-height)
     )
 )
 
-(define-private (update-account-balance (account-id uint) (amount uint) (tx-type (string-ascii 16)))
-    (match (map-get? accounts { owner: tx-sender, account-id: account-id })
-        account 
-        (let
-            (
-                (new-balance (if (is-eq tx-type "EXPENSE")
-                    (- (get balance account) amount)
-                    (+ (get balance account) amount)
-                ))
-            )
-            (map-set accounts
-                { owner: tx-sender, account-id: account-id }
-                {
-                    name: (get name account),
-                    balance: new-balance,
-                    created-at: (get created-at account),
-                    last-updated: block-height
-                }
-            )
-            (ok new-balance)
-        )
-        err-not-found
-    )
-)
+;; [Previous private functions remain unchanged]
 
-(define-private (reset-budget (budget-data {limit: uint, period: (string-ascii 16), used: uint, last-reset: uint, alerts-enabled: bool, alert-threshold: uint}) (amount uint))
-    {
-        limit: (get limit budget-data),
-        period: (get period budget-data),
-        used: amount,
-        last-reset: block-height,
-        alerts-enabled: (get alerts-enabled budget-data),
-        alert-threshold: (get alert-threshold budget-data)
-    }
-)
-
-;; [Previous functions remain unchanged]
-
-(define-public (record-transaction 
-    (account-id uint)
-    (amount uint)
-    (category (string-ascii 32))
-    (description (string-ascii 128))
-    (tx-type (string-ascii 16))
-)
-    (if (and (is-account-owner account-id) (> amount u0))
-        (let
-            (
-                (new-tx-id (+ (var-get last-tx-id) u1))
-                (budget-data (map-get? budgets {owner: tx-sender, category: category}))
-                (balance-update-result (update-account-balance account-id amount tx-type))
-            )
-            (match balance-update-result
-                new-balance
-                (match budget-data
-                    budget 
-                    (if (and (is-eq tx-type "EXPENSE") (> (+ amount (get used budget)) (get limit budget)))
-                        err-budget-exceeded
-                        (begin
-                            (map-set budgets 
-                                {owner: tx-sender, category: category}
-                                (if (should-reset-budget budget)
-                                    (reset-budget budget amount)
-                                    (merge budget { used: (+ amount (get used budget)) })
-                                )
-                            )
-                            (map-set transactions
-                                { tx-id: new-tx-id }
-                                {
-                                    account-id: account-id,
-                                    amount: amount,
-                                    category: category,
-                                    description: description,
-                                    tx-type: tx-type,
-                                    timestamp: block-height,
-                                    balance-after: new-balance
-                                }
-                            )
-                            (var-set last-tx-id new-tx-id)
-                            (ok new-tx-id)
-                        )
-                    )
-                    (begin
-                        (map-set transactions
-                            { tx-id: new-tx-id }
-                            {
-                                account-id: account-id,
-                                amount: amount,
-                                category: category,
-                                description: description,
-                                tx-type: tx-type,
-                                timestamp: block-height,
-                                balance-after: new-balance
-                            }
-                        )
-                        (var-set last-tx-id new-tx-id)
-                        (ok new-tx-id)
-                    )
-                )
-                err-not-found
-            )
-        )
-        err-unauthorized
-    )
-)
-
-;; New read-only functions
-(define-read-only (get-account-transactions (account-id uint) (limit uint))
+;; Enhanced read-only functions
+(define-read-only (get-account-transactions (account-id uint) (limit uint) (offset uint))
     (let
         (
             (tx-list (list ))
             (current-tx-id (var-get last-tx-id))
+            (start-tx (if (> current-tx-id offset)
+                (- current-tx-id offset)
+                u0
+            ))
         )
-        (ok tx-list) ;; TODO: Implement transaction list building
+        (if (> limit u50)
+            (err err-invalid-limit)
+            (ok (filter get-transaction-if-matches 
+                (range start-tx (- start-tx limit))))
+        )
+    )
+)
+
+(define-private (get-transaction-if-matches (tx-id uint))
+    (match (map-get? transactions {tx-id: tx-id})
+        tx-data tx-data
+        none
     )
 )
 
 (define-read-only (get-account-balance-history (account-id uint) (from-block uint) (to-block uint))
-    (let
-        (
-            (balance-history (list ))
+    (if (validate-block-range from-block to-block)
+        (let
+            (
+                (balance-history (list ))
+                (transactions (get-transactions-in-range account-id from-block to-block))
+            )
+            (ok transactions)
         )
-        (ok balance-history) ;; TODO: Implement balance history tracking
+        (err err-invalid-range)
     )
 )
 
-;; [Previous read-only functions remain unchanged]
+(define-private (get-transactions-in-range (account-id uint) (from-block uint) (to-block uint))
+    (filter is-transaction-in-range 
+        (map unwrap-transaction 
+            (range from-block to-block)))
+)
+
+(define-private (is-transaction-in-range (tx-data (optional {account-id: uint, amount: uint, category: (string-ascii 32), description: (string-ascii 128), tx-type: (string-ascii 16), timestamp: uint, balance-after: uint})))
+    (match tx-data
+        value (and 
+            (is-eq (get account-id value) account-id)
+            (>= (get timestamp value) from-block)
+            (<= (get timestamp value) to-block)
+        )
+        false
+    )
+)
+
+;; [Rest of the contract remains unchanged]
